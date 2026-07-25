@@ -1,0 +1,18 @@
+project: geoai_mlops_p1
+registry: data/registry.db
+provider: local
+offline_store:
+    type: postgres
+    host: ${DB_HOST}
+    port: 5432
+    database: geoai_features
+    user: ${DB_USER}
+    password: ${DB_PASSWORD}
+online_store:
+    type: postgres
+    host: ${DB_HOST}
+    port: 5432
+    database: geoai_features
+    user: ${DB_USER}
+    password: ${DB_PASSWORD}
+entity_key_serialization_version: 2

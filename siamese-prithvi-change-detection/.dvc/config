@@ -1,0 +1,8 @@
+[core]
+    remote = s3remote
+    autostage = false
+[cache]
+    s3 = s3://geoai-mlops-p1-data-288528696055/dvc-cache/
+['remote "s3remote"']
+    url = s3://geoai-mlops-p1-data-288528696055/dvc-store/
+    region = us-east-1

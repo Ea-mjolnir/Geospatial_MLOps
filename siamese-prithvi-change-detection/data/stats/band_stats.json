@@ -1,0 +1,27 @@
+{
+  "blue": {
+    "mean": 528.5231777472958,
+    "std": 629.0786082757414,
+    "note": "derived from PostGIS blue_mean column"
+  },
+  "green": {
+    "mean": 687.4173093673387,
+    "std": 582.1603742215427,
+    "note": "derived from PostGIS green_mean column"
+  },
+  "red": {
+    "mean": 677.4148344308519,
+    "std": 610.5647206215665,
+    "note": "derived from PostGIS red_mean column"
+  },
+  "nir": {
+    "mean": 2316.836750226896,
+    "std": 709.4119412656316,
+    "note": "derived from PostGIS nir_mean column"
+  },
+  "swir": {
+    "mean": 1637.76079313314,
+    "std": 496.6839749010508,
+    "note": "derived from PostGIS swir_mean column"
+  }
+}

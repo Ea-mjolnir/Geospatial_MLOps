@@ -1,0 +1,35 @@
+# GeoAI MLOps Project 1 — Colab Dependencies
+# =============================================
+# Install in this EXACT order to avoid version conflicts.
+#
+# IMPORTANT: terratorch must be installed FIRST — it owns
+# its own dependencies. Everything else is pinned AFTER.
+#
+# Step 1: terratorch (install first)
+terratorch
+#
+# Step 2: torch (force reinstall after terratorch)
+torch==2.2.0
+torchvision==0.17.0
+#
+# Step 3: remaining dependencies
+transformers==4.40.0
+timm
+einops
+mlflow==2.14.3
+psycopg2-binary
+boto3
+rasterio
+scipy
+pystac-client
+huggingface_hub==0.20.3
+awscli
+pyyaml
+pandas
+tqdm
+#
+# Step 4: pin critical versions LAST (terratorch overrides these)
+numpy==1.26.4
+huggingface-hub==0.20.3
+protobuf==3.20.3
+setuptools==69.5.1
