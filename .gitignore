@@ -1,0 +1,29 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+*.so
+
+# Data files — use DVC instead
+*.csv
+*.parquet
+*.tif
+*.geojson
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Environment
+.env
+*.env
+venv/
+.venv/
+
+# AWS
+.aws/
+
+# OS
+.DS_Store
+Thumbs.db
