@@ -1,0 +1,111 @@
+model:
+  encoders:
+    iot:
+      bidirectional: true
+      embed_dim: 256
+      hidden_dim: 256
+      input_dim: 16
+      name: temporal_lstm
+      num_layers: 2
+      pretrained: false
+      sequence_length: 12
+      vram_estimate_gb: 0.3
+    lidar:
+      embed_dim: 512
+      in_channels: 4
+      name: pointnet_plus_plus
+      num_points: 4096
+      num_sa_layers: 4
+      pretrained: false
+      vram_estimate_gb: 1.0
+    optical:
+      backbone: prithvi
+      embed_dim: 1024
+      freeze_strategy: full
+      in_channels: 6
+      name: prithvi_eo_v2_300
+      num_frames: 1
+      num_heads: 16
+      num_layers: 24
+      patch_size: 16
+      pretrained: true
+      vram_estimate_gb: 5.0
+    osm:
+      aggregation: mean
+      edge_features: 32
+      embed_dim: 256
+      name: graph_sage
+      node_features: 64
+      num_layers: 3
+      pretrained: false
+      vram_estimate_gb: 0.5
+    sar:
+      backbone: vit_base
+      embed_dim: 768
+      in_channels: 2
+      name: sar_vit_base
+      num_heads: 12
+      num_layers: 12
+      patch_size: 16
+      pretrained: false
+      vram_estimate_gb: 1.0
+    thermal:
+      embed_dim: 512
+      in_channels: 1
+      name: thermal_resnet18
+      pretrained: true
+      vram_estimate_gb: 0.5
+  fusion:
+    common_dim: 512
+    dropout: 0.1
+    modality_dropout_prob: 0.3
+    modality_type_embedding: true
+    name: cross_modal_attention_transformer
+    num_heads: 8
+    num_layers: 4
+    vram_estimate_gb: 2.0
+  memory_budget:
+    batch_data: 2.0
+    fusion_layers: 2.0
+    gradients_optimizer: 2.0
+    iot_encoder: 0.3
+    lidar_encoder: 1.0
+    optical_encoder: 5.0
+    osm_encoder: 0.5
+    safety_margin: 0.2
+    sar_encoder: 1.0
+    task_heads: 0.5
+    thermal_encoder: 0.5
+    total_estimate: 14.8
+  name: OmniGeoFusion
+  tasks:
+    agriculture:
+      activation: relu
+      dropout: 0.2
+      hidden_dims:
+      - 512
+      - 256
+      loss: mse
+      metric: r2
+      output_dim: 4
+    flood_damage:
+      activation:
+      - sigmoid
+      - relu
+      dropout: 0.2
+      hidden_dims:
+      - 512
+      - 256
+      loss: bce_mse_combined
+      metric: iou_rmse
+      output_dim: 2
+    urban_change:
+      activation: sigmoid
+      dropout: 0.2
+      hidden_dims:
+      - 512
+      - 256
+      loss: mse
+      metric: r2
+      output_dim: 1
+  version: 1.0.0

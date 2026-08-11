@@ -1,0 +1,98 @@
+# OmniGeoFusion Data Configuration
+
+study_area:
+  name: Netherlands
+  bbox: [3.2, 50.7, 7.2, 53.6]  # [min_lon, min_lat, max_lon, max_lat]
+  crs: EPSG:28992               # Dutch RD New projection
+
+# Study regions per task
+regions:
+  task_a_urban:
+    name: Amsterdam
+    bbox: [4.7, 52.2, 5.1, 52.5]
+  task_b_flood:
+    name: Rotterdam
+    bbox: [4.2, 51.8, 4.7, 52.0]
+  task_c_agriculture:
+    name: Flevoland
+    bbox: [5.2, 52.3, 5.8, 52.7]
+
+# Sentinel-2
+sentinel2:
+  source: copernicus_dataspace
+  bands: [B02, B03, B04, B08, B11, B8A, SCL]
+  resolution: 10
+  cloud_max: 0.20
+  time_window_days: 30
+
+# Sentinel-1
+sentinel1:
+  source: copernicus_dataspace
+  polarization: [VV, VH]
+  mode: IW
+  resolution: 10
+
+# AHN LiDAR
+lidar:
+  source: opentopography_s3
+  endpoint: https://opentopography.s3.sdsc.edu
+  bucket: raster
+  prefix: NL22_AHN4
+  ahn3_prefix: NL_AHN3
+  resolution: 0.5
+  products: [DSM, DTM]
+  crs: EPSG:28992
+
+# Thermal
+thermal:
+  landsat:
+    source: usgs_earthexplorer
+    bands: [B10]
+    resolution: 100
+    revisit_days: 16
+  sentinel3:
+    source: copernicus_dataspace
+    product: SLSTR
+    resolution: 1000
+    revisit_days: 1
+
+# OSM
+osm:
+  source: geofabrik
+  url: https://download.geofabrik.de/europe/netherlands-latest.osm.pbf
+  layers: [buildings, roads, landuse, waterways, natural]
+
+# IoT Sensors
+iot:
+  air_quality:
+    source: luchtmeetnet
+    url: https://api.luchtmeetnet.nl/open_api
+    parameters: [NO2, PM25, PM10, O3]
+  water:
+    source: rijkswaterstaat
+    url: https://waterwebservices.rijkswaterstaat.nl
+    parameters: [water_level, flow_rate, water_temperature]
+  weather:
+    source: knmi
+    url: https://knmi.nl/nederland-nu/klimatologie
+    parameters: [temperature, rainfall, wind, soil_temperature]
+  traffic:
+    source: ndw
+    url: https://opendata.ndw.nu
+    parameters: [vehicle_count, speed, occupancy]
+
+# Patch settings
+patches:
+  size: 256
+  step: 256
+  min_valid_pixels: 0.7
+
+# AWS
+aws:
+  region: us-east-1
+  bucket: omnigeofusion-data-288528696055
+  prefix: netherlands
+
+# GDrive checkpoints
+checkpoints:
+  gdrive_path: /gdrive/MyDrive/omnigeofusion/checkpoints

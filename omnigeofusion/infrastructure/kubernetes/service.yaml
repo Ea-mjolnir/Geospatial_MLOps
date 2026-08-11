@@ -1,0 +1,127 @@
+# ================================================================
+# OmniGeoFusion — Kubernetes Service + HPA
+# ================================================================
+
+# ── Namespace ─────────────────────────────────────────────────
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: omnigeofusion
+  labels:
+    app: omnigeofusion
+
+---
+# ── Service ───────────────────────────────────────────────────
+apiVersion: v1
+kind: Service
+metadata:
+  name: omnigeofusion-api-svc
+  namespace: omnigeofusion
+  labels:
+    app:  omnigeofusion
+    tier: api
+  annotations:
+    # AWS Load Balancer Controller annotations
+    service.beta.kubernetes.io/aws-load-balancer-type:   "nlb"
+    service.beta.kubernetes.io/aws-load-balancer-scheme: "internet-facing"
+spec:
+  type: LoadBalancer
+  selector:
+    app:  omnigeofusion
+    tier: api
+  ports:
+    - name:       http
+      port:       80
+      targetPort: 8000
+      protocol:   TCP
+    - name:       https
+      port:       443
+      targetPort: 8000
+      protocol:   TCP
+  sessionAffinity: None
+
+---
+# ── Horizontal Pod Autoscaler ─────────────────────────────────
+# Scales API pods based on CPU + memory usage
+# Satellite data requests spike every 90 min (orbital period)
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: omnigeofusion-api-hpa
+  namespace: omnigeofusion
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind:       Deployment
+    name:       omnigeofusion-api
+  minReplicas: 2
+  maxReplicas: 10
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type:               Utilization
+          averageUtilization: 70
+    - type: Resource
+      resource:
+        name: memory
+        target:
+          type:               Utilization
+          averageUtilization: 80
+  behavior:
+    scaleUp:
+      stabilizationWindowSeconds: 60
+      policies:
+        - type:          Pods
+          value:         2
+          periodSeconds: 60
+    scaleDown:
+      stabilizationWindowSeconds: 300
+      policies:
+        - type:          Pods
+          value:         1
+          periodSeconds: 120
+
+---
+# ── ConfigMap ─────────────────────────────────────────────────
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: omnigeofusion-config
+  namespace: omnigeofusion
+data:
+  MODEL_VERSION: "1.0.0"
+  AWS_DEFAULT_REGION: "us-east-1"
+  LOG_LEVEL: "info"
+
+---
+# ── PersistentVolumeClaim: model checkpoints ──────────────────
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: omnigeofusion-checkpoints-pvc
+  namespace: omnigeofusion
+spec:
+  accessModes:
+    - ReadOnlyMany
+  storageClassName: efs-sc   # AWS EFS for shared read access
+  resources:
+    requests:
+      storage: 10Gi
+
+---
+# ── Secret template (values injected by CI/CD) ───────────────
+# DO NOT commit real values — CI/CD injects from AWS Secrets Manager
+apiVersion: v1
+kind: Secret
+metadata:
+  name: omnigeofusion-secrets
+  namespace: omnigeofusion
+type: Opaque
+stringData:
+  aws-access-key-id:     "REPLACE_IN_CICD"
+  aws-secret-access-key: "REPLACE_IN_CICD"
+  postgres-host:         "REPLACE_IN_CICD"
+  postgres-url:          "REPLACE_IN_CICD"
+  redis-url:             "REPLACE_IN_CICD"

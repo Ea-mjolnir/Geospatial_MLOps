@@ -1,0 +1,343 @@
+# ================================================================
+# OmniGeoFusion — CD Pipeline (Blue-Green Deployment)
+# ================================================================
+# Triggers on push to main after CI passes
+#
+# Steps:
+#   1. Build + push Docker images to ECR
+#   2. Run integration tests against staging
+#   3. Blue-green deployment to EKS production
+#   4. Health check + smoke test
+#   5. Rollback automatically if health check fails
+#
+# Blue-Green Strategy:
+#   Blue  = current production (stable)
+#   Green = new version (candidate)
+#   Switch ALB target group blue → green after health check
+#   Keep blue running for 5 min rollback window
+# ================================================================
+
+name: CD
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'omnigeofusion/**'
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: "Deploy to environment"
+        required:    true
+        default:     "staging"
+        type:        choice
+        options:     [staging, production]
+
+defaults:
+  run:
+    working-directory: omnigeofusion
+
+env:
+  AWS_REGION:   "us-east-1"
+  ECR_REGISTRY: "${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.us-east-1.amazonaws.com"
+  EKS_CLUSTER:  "omnigeofusion-dev-cluster"
+  NAMESPACE:    "omnigeofusion"
+
+jobs:
+
+  # ── Job 1: Build + Push to ECR ───────────────────────────────
+  build-push:
+    name: Build + Push
+    runs-on: ubuntu-latest
+    outputs:
+      image-tag: ${{ steps.meta.outputs.version }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id:     ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region:            ${{ env.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        id:   login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Generate image metadata
+        id:   meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.ECR_REGISTRY }}/omnigeofusion/api
+          tags: |
+            type=sha,prefix=,suffix=,format=short
+            type=ref,event=branch
+            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build + push API image
+        uses: docker/build-push-action@v5
+        with:
+          context:    omnigeofusion
+          file:       omnigeofusion/docker/Dockerfile.api
+          push:       true
+          tags:       ${{ steps.meta.outputs.tags }}
+          labels:     ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to:   type=gha,mode=max
+          build-args: |
+            BUILD_DATE=${{ github.event.repository.updated_at }}
+            GIT_SHA=${{ github.sha }}
+            VERSION=${{ steps.meta.outputs.version }}
+
+      - name: Build + push fusion image
+        uses: docker/build-push-action@v5
+        with:
+          context: omnigeofusion
+          file:    omnigeofusion/docker/Dockerfile.fusion
+          push:    true
+          tags:    ${{ env.ECR_REGISTRY }}/omnigeofusion/fusion:${{ github.sha }}
+          cache-from: type=gha
+          cache-to:   type=gha,mode=max
+
+      - name: Scan pushed image
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: ${{ env.ECR_REGISTRY }}/omnigeofusion/api:latest
+          format:    table
+          severity:  CRITICAL
+          exit-code: 1
+        continue-on-error: true
+
+
+  # ── Job 2: Deploy to Staging ──────────────────────────────────
+  deploy-staging:
+    name: Deploy Staging
+    runs-on: ubuntu-latest
+    needs: build-push
+    environment:
+      name: staging
+      url:  http://staging.omnigeofusion.example.com
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id:     ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region:            ${{ env.AWS_REGION }}
+
+      - name: Configure kubectl
+        run: |
+          aws eks update-kubeconfig \
+            --region ${{ env.AWS_REGION }} \
+            --name ${{ env.EKS_CLUSTER }}
+
+      - name: Deploy to staging namespace
+        run: |
+          # Update image tag in deployment
+          kubectl set image deployment/omnigeofusion-api \
+            omnigeofusion-api=${{ env.ECR_REGISTRY }}/omnigeofusion/api:${{ github.sha }} \
+            -n omnigeofusion-staging
+
+          # Wait for rollout
+          kubectl rollout status deployment/omnigeofusion-api \
+            -n omnigeofusion-staging \
+            --timeout=300s
+
+      - name: Smoke test staging
+        run: |
+          STAGING_URL=$(kubectl get svc omnigeofusion-api-svc \
+            -n omnigeofusion-staging \
+            -o jsonpath='{.status.loadBalancer.ingress[0].hostname}')
+
+          echo "Testing staging: $STAGING_URL"
+
+          # Health check
+          curl -f http://${STAGING_URL}/health || exit 1
+          echo "✅ Health check passed"
+
+          # Model info check
+          curl -f http://${STAGING_URL}/api/v1/model/info || exit 1
+          echo "✅ Model info check passed"
+
+          # Urban change inference test
+          curl -f -X POST http://${STAGING_URL}/api/v1/fusion/urban-change \
+            -H "Content-Type: application/json" \
+            -d '{
+              "bbox": {
+                "min_lon": 4.85, "min_lat": 52.35,
+                "max_lon": 4.95, "max_lat": 52.40
+              },
+              "date_t1": "2020-07-07",
+              "date_t2": "2023-07-07"
+            }' || exit 1
+          echo "✅ Urban change inference passed"
+
+
+  # ── Job 3: Blue-Green Production Deploy ───────────────────────
+  deploy-production:
+    name: Deploy Production (Blue-Green)
+    runs-on: ubuntu-latest
+    needs: deploy-staging
+    environment:
+      name: production
+      url:  http://api.omnigeofusion.example.com
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id:     ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region:            ${{ env.AWS_REGION }}
+
+      - name: Configure kubectl
+        run: |
+          aws eks update-kubeconfig \
+            --region ${{ env.AWS_REGION }} \
+            --name ${{ env.EKS_CLUSTER }}
+
+      # ── Deploy GREEN ─────────────────────────────────────────
+      - name: Deploy GREEN version
+        run: |
+          IMAGE=${{ env.ECR_REGISTRY }}/omnigeofusion/api:${{ github.sha }}
+          echo "Deploying GREEN: $IMAGE"
+
+          # Create green deployment
+          kubectl get deployment omnigeofusion-api \
+            -n ${{ env.NAMESPACE }} \
+            -o yaml | \
+          sed "s|omnigeofusion-api|omnigeofusion-api-green|g" | \
+          sed "s|image:.*|image: $IMAGE|g" | \
+          kubectl apply -f -
+
+          # Wait for green to be ready
+          kubectl rollout status deployment/omnigeofusion-api-green \
+            -n ${{ env.NAMESPACE }} \
+            --timeout=300s
+
+          echo "✅ GREEN deployment ready"
+
+      # ── Health check GREEN ───────────────────────────────────
+      - name: Health check GREEN
+        id: health-check
+        run: |
+          # Port forward to green deployment for testing
+          kubectl port-forward \
+            deployment/omnigeofusion-api-green \
+            18000:8000 \
+            -n ${{ env.NAMESPACE }} &
+          PF_PID=$!
+          sleep 10
+
+          # Run checks
+          PASSED=true
+
+          curl -f http://localhost:18000/health || PASSED=false
+          curl -f http://localhost:18000/api/v1/model/info || PASSED=false
+
+          kill $PF_PID
+
+          if [ "$PASSED" = "false" ]; then
+            echo "❌ GREEN health check failed"
+            exit 1
+          fi
+          echo "✅ GREEN health check passed"
+
+      # ── Switch traffic to GREEN ──────────────────────────────
+      - name: Switch traffic to GREEN
+        run: |
+          echo "Switching ALB traffic: BLUE → GREEN"
+
+          # Update service selector to point to green
+          kubectl patch service omnigeofusion-api-svc \
+            -n ${{ env.NAMESPACE }} \
+            -p '{"spec":{"selector":{"version":"green"}}}'
+
+          echo "✅ Traffic switched to GREEN"
+
+      # ── Wait + monitor ───────────────────────────────────────
+      - name: Monitor GREEN for 2 minutes
+        run: |
+          echo "Monitoring GREEN deployment for 2 minutes..."
+          sleep 120
+
+          # Check pod status
+          READY=$(kubectl get deployment omnigeofusion-api-green \
+            -n ${{ env.NAMESPACE }} \
+            -o jsonpath='{.status.readyReplicas}')
+
+          DESIRED=$(kubectl get deployment omnigeofusion-api-green \
+            -n ${{ env.NAMESPACE }} \
+            -o jsonpath='{.spec.replicas}')
+
+          if [ "$READY" != "$DESIRED" ]; then
+            echo "❌ GREEN pods not all ready: $READY/$DESIRED"
+            exit 1
+          fi
+          echo "✅ GREEN stable: $READY/$DESIRED pods ready"
+
+      # ── Cleanup BLUE ─────────────────────────────────────────
+      - name: Cleanup BLUE deployment
+        if: success()
+        run: |
+          echo "Removing BLUE deployment..."
+          kubectl delete deployment omnigeofusion-api \
+            -n ${{ env.NAMESPACE }} \
+            --ignore-not-found=true
+
+          # Rename green to blue for next cycle
+          kubectl get deployment omnigeofusion-api-green \
+            -n ${{ env.NAMESPACE }} \
+            -o yaml | \
+          sed "s|omnigeofusion-api-green|omnigeofusion-api|g" | \
+          kubectl apply -f -
+
+          kubectl delete deployment omnigeofusion-api-green \
+            -n ${{ env.NAMESPACE }} \
+            --ignore-not-error=true
+
+          echo "✅ Blue-green cycle complete"
+
+      # ── Rollback if failed ───────────────────────────────────
+      - name: Rollback to BLUE on failure
+        if: failure()
+        run: |
+          echo "❌ Deployment failed — rolling back to BLUE"
+
+          # Switch traffic back to blue
+          kubectl patch service omnigeofusion-api-svc \
+            -n ${{ env.NAMESPACE }} \
+            -p '{"spec":{"selector":{"version":"blue"}}}'
+
+          # Remove failed green deployment
+          kubectl delete deployment omnigeofusion-api-green \
+            -n ${{ env.NAMESPACE }} \
+            --ignore-not-found=true
+
+          echo "✅ Rolled back to BLUE successfully"
+          exit 1
+
+      # ── Notify ───────────────────────────────────────────────
+      - name: Deployment summary
+        if: always()
+        run: |
+          echo "=================================="
+          echo "OmniGeoFusion Deployment Summary"
+          echo "=================================="
+          echo "Image:       ${{ env.ECR_REGISTRY }}/omnigeofusion/api:${{ github.sha }}"
+          echo "Environment: production"
+          echo "Strategy:    blue-green"
+          echo "Status:      ${{ job.status }}"
+          echo "Commit:      ${{ github.sha }}"
+          echo "Author:      ${{ github.actor }}"
+          echo "=================================="

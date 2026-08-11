@@ -1,0 +1,131 @@
+# ================================================================
+# OmniGeoFusion — Docker Compose
+# Local development orchestration
+#
+# Services:
+#   api:      FastAPI model serving (CPU mode for local dev)
+#   redis:    Feature cache (ElastiCache equivalent)
+#   postgres: PostGIS vector store (RDS equivalent)
+#   mlflow:   Experiment tracking
+#
+# Usage:
+#   docker-compose up           → start all services
+#   docker-compose up api       → start API only
+#   docker-compose down         → stop all
+#   docker-compose down -v      → stop + delete volumes
+# ================================================================
+
+version: '3.9'
+
+networks:
+  omnigeofusion:
+    driver: bridge
+
+volumes:
+  postgres_data:
+  redis_data:
+  mlflow_data:
+  checkpoints:
+
+services:
+
+  # ── FastAPI serving ─────────────────────────────────────────
+  api:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.api
+    image: omnigeofusion-api:latest
+    container_name: omnigeofusion-api
+    ports:
+      - '8000:8000'
+    environment:
+      - MODEL_CONFIG=/app/configs/model_config.yaml
+      - TRAIN_CONFIG=/app/configs/training_config.yaml
+      - API_CONFIG=/app/configs/api_config.yaml
+      - CHECKPOINT_DIR=/checkpoints
+      - MODEL_VERSION=1.0.0
+      - POSTGRES_URL=postgresql://omnigeofusion:omnigeofusion@postgres:5432/omnigeofusion
+      - REDIS_URL=redis://redis:6379
+      - MLFLOW_TRACKING_URI=http://mlflow:5000
+      - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}
+      - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}
+      - AWS_DEFAULT_REGION=us-east-1
+    volumes:
+      - checkpoints:/checkpoints
+      - ../configs:/app/configs:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - omnigeofusion
+    restart: unless-stopped
+    healthcheck:
+      test: ['CMD', 'curl', '-f', 'http://localhost:8000/health']
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+  # ── PostGIS vector store ─────────────────────────────────────
+  postgres:
+    image: postgis/postgis:15-3.3
+    container_name: omnigeofusion-postgres
+    ports:
+      - '5432:5432'
+    environment:
+      POSTGRES_DB:       omnigeofusion
+      POSTGRES_USER:     omnigeofusion
+      POSTGRES_PASSWORD: omnigeofusion
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - omnigeofusion
+    restart: unless-stopped
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U omnigeofusion']
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ── Redis feature cache ──────────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    container_name: omnigeofusion-redis
+    ports:
+      - '6379:6379'
+    command: redis-server --maxmemory 2gb --maxmemory-policy allkeys-lru
+    volumes:
+      - redis_data:/data
+    networks:
+      - omnigeofusion
+    restart: unless-stopped
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ── MLflow experiment tracking ───────────────────────────────
+  mlflow:
+    image: ghcr.io/mlflow/mlflow:v2.10.0
+    container_name: omnigeofusion-mlflow
+    ports:
+      - '5000:5000'
+    command: >
+      mlflow server
+      --host 0.0.0.0
+      --port 5000
+      --backend-store-uri postgresql://omnigeofusion:omnigeofusion@postgres:5432/mlflow
+      --default-artifact-root /mlflow/artifacts
+    volumes:
+      - mlflow_data:/mlflow/artifacts
+    environment:
+      - MLFLOW_TRACKING_URI=http://localhost:5000
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - omnigeofusion
+    restart: unless-stopped

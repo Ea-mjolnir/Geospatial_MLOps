@@ -1,0 +1,81 @@
+# ================================================================
+# OmniGeoFusion — Fusion Model Dockerfile
+# ================================================================
+# GPU-enabled container for model training + inference
+# Used by:
+#   - Colab (training via mounted GDrive)
+#   - EKS GPU nodes (serving)
+#
+# Build:
+#   docker build -f docker/Dockerfile.fusion \
+#     -t omnigeofusion-fusion .
+#
+# Run (GPU):
+#   docker run --gpus all \
+#     -v /gdrive:/gdrive \
+#     omnigeofusion-fusion
+# ================================================================
+
+FROM nvidia/cuda:12.1.0-cudnn8-runtime-ubuntu22.04
+
+# System dependencies
+RUN apt-get update && apt-get install -y \
+    python3.10 \
+    python3-pip \
+    python3.10-dev \
+    build-essential \
+    gcc \
+    g++ \
+    git \
+    libgdal-dev \
+    gdal-bin \
+    libproj-dev \
+    libgeos-dev \
+    libspatialindex-dev \
+    libgl1-mesa-glx \
+    curl \
+    wget \
+    && rm -rf /var/lib/apt/lists/*
+
+# Python aliases
+RUN ln -s /usr/bin/python3.10 /usr/bin/python && \
+    ln -s /usr/bin/pip3 /usr/bin/pip
+
+WORKDIR /app
+
+# Install PyTorch with CUDA 12.1
+RUN pip install --upgrade pip && \
+    pip install --no-cache-dir \
+        torch==2.2.0 \
+        torchvision==0.17.0 \
+        torchaudio==2.2.0 \
+        --index-url https://download.pytorch.org/whl/cu121
+
+# Install TerraTorch for Prithvi
+RUN pip install --no-cache-dir \
+    terratorch \
+    timm \
+    einops \
+    transformers
+
+# Install geospatial + ML dependencies
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Copy application code
+COPY src/     ./src/
+COPY configs/ ./configs/
+
+# ── Environment ───────────────────────────────────────────────
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONPATH=/app \
+    CUDA_VISIBLE_DEVICES=0 \
+    TORCH_HOME=/app/.torch \
+    MPLBACKEND=agg
+
+# ── Default command ───────────────────────────────────────────
+# Override with specific training/inference command
+CMD ["python", "-m", "src.training.ssl_pretrain", \
+     "--model-config", "configs/model_config.yaml", \
+     "--train-config", "configs/training_config.yaml"]

@@ -1,0 +1,147 @@
+checkpoints:
+  best_dir: /gdrive/MyDrive/omnigeofusion/checkpoints/best
+  finetune_dir: /gdrive/MyDrive/omnigeofusion/checkpoints/finetune
+  gdrive_base: /gdrive/MyDrive/omnigeofusion/checkpoints
+  keep_top_k: 3
+  local_dir: /gdrive/MyDrive/omnigeofusion/checkpoints/local
+  save_every_n_epochs: 1
+  ssl_dir: /gdrive/MyDrive/omnigeofusion/checkpoints/ssl
+data:
+  augmentation:
+    color_jitter: false
+    horizontal_flip: 0.5
+    rotation_degrees: 90
+    vertical_flip: 0.5
+  modality_dropout_prob: 0.3
+  seed: 42
+  spatial_split: true
+  test_split: 0.15
+  train_split: 0.7
+  val_split: 0.15
+finetune_agriculture:
+  best_metric: val_r2
+  description: "Weakly supervised fine-tuning for precision agriculture. All targets\
+    \ automatically derived from data:\n  NDVI/LAI from Sentinel-2 (spectral indices)\n\
+    \  Crop height from AHN4 LiDAR (DSM - DTM)\n  Soil moisture from KNMI + WUR IoT\
+    \ sensors\n  Crop water stress from Landsat thermal\n"
+  early_stopping_patience: 10
+  optimizer: adamw
+  phase1:
+    batch_size: 16
+    epochs: 10
+    freeze_optical: true
+    learning_rate: 0.001
+  phase2:
+    batch_size: 4
+    epochs: 20
+    freeze_optical: partial
+    learning_rate:
+      fusion: 0.0001
+      optical_last4: 1.0e-05
+      task_head: 0.0001
+    unfreeze_optical_layers: 4
+  target:
+    crop_height: true
+    lai: true
+    ndvi: true
+    soil_moisture: true
+    thermal_stress: true
+  weight_decay: 0.01
+finetune_flood:
+  best_metric: damage_acc
+  description: 'Weakly supervised fine-tuning for flood/disaster assessment. Primary
+    target: SAR water mask (automatic from S1) Secondary target: flood depth from
+    AHN4 DEM + water sensors Validation: Copernicus Emergency Management labels
+
+    '
+  early_stopping_patience: 10
+  optimizer: adamw
+  phase1:
+    batch_size: 16
+    epochs: 10
+    freeze_optical: true
+    learning_rate: 0.001
+  phase2:
+    batch_size: 4
+    epochs: 20
+    freeze_optical: partial
+    learning_rate:
+      fusion: 0.0001
+      optical_last4: 1.0e-05
+      task_head: 0.0001
+    unfreeze_optical_layers: 4
+  target:
+    primary: sar_water_mask
+    primary_weight: 0.6
+    sar_backscatter_threshold: -16.0
+    secondary: dem_flood_depth
+    secondary_weight: 0.4
+  weight_decay: 0.01
+finetune_urban_change:
+  best_metric: val_r2
+  description: "Weakly supervised fine-tuning for urban change detection. Target automatically\
+    \ generated from:\n  spectral_change (S2) + lidar_height_diff (AHN3-AHN4)\n  +\
+    \ SAR_coherence_loss (S1)\nNo manual labels needed.\n"
+  early_stopping_patience: 10
+  optimizer: adamw
+  phase1:
+    batch_size: 16
+    epochs: 10
+    freeze_optical: true
+    freeze_optical_layers: all
+    learning_rate: 0.001
+  phase2:
+    batch_size: 4
+    epochs: 20
+    freeze_optical: partial
+    learning_rate:
+      fusion: 0.0001
+      optical_last4: 1.0e-05
+      task_head: 0.0001
+    unfreeze_optical_layers: 4
+  target:
+    lidar_weight: 0.4
+    normalize: true
+    sar_coherence_weight: 0.2
+    spectral_weight: 0.4
+  weight_decay: 0.01
+hardware:
+  device: cuda
+  gradient_checkpointing: true
+  mixed_precision: true
+  num_workers: 2
+  pin_memory: true
+mlflow:
+  experiment_name: omnigeofusion-ssl
+  tracking_uri: http://54.83.1.56:5000
+ssl:
+  batch_size: 8
+  contrastive:
+    negative_samples: 64
+    pairs:
+    - optical_sar
+    - optical_thermal
+    - sar_lidar
+    temperature: 0.07
+  description: 'Self-supervised pre-training on unlabeled Netherlands data. No labels
+    needed. Learns universal multimodal representations. Prithvi v2_300M optical encoder
+    FULLY FROZEN. All other encoders + fusion trained from scratch.
+
+    '
+  epochs: 100
+  freeze_optical: true
+  freeze_optical_layers: all
+  gradient_clip: 1.0
+  learning_rate: 0.00015
+  mae:
+    decoder_depth: 4
+    decoder_embed_dim: 256
+    mask_ratio: 0.75
+    norm_pix_loss: true
+  optimizer: adamw
+  scheduler: cosine_with_warmup
+  temporal:
+    max_positive_gap_days: 30
+    min_negative_gap_days: 180
+  warmup_epochs: 5
+  weight_decay: 0.05

@@ -1,0 +1,101 @@
+# ================================================================
+# OmniGeoFusion — API Dockerfile
+# ================================================================
+# Multi-stage build:
+#   Stage 1 (builder): install dependencies
+#   Stage 2 (runtime): minimal production image
+#
+# Build:
+#   docker build -f docker/Dockerfile.api -t omnigeofusion-api .
+#
+# Run:
+#   docker run -p 8000:8000 \
+#     -e CHECKPOINT_DIR=/checkpoints \
+#     -v /path/to/checkpoints:/checkpoints \
+#     omnigeofusion-api
+# ================================================================
+
+# ── Stage 1: Builder ──────────────────────────────────────────
+FROM python:3.10-slim AS builder
+
+# Install build dependencies
+RUN apt-get update && apt-get install -y \
+    build-essential \
+    gcc \
+    g++ \
+    git \
+    libgdal-dev \
+    gdal-bin \
+    libproj-dev \
+    libgeos-dev \
+    libspatialindex-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /build
+
+# Copy requirements first (Docker layer caching)
+COPY requirements.txt .
+
+# Install Python dependencies
+RUN pip install --upgrade pip && \
+    pip install --no-cache-dir \
+        torch==2.2.0 \
+        torchvision==0.17.0 \
+        --index-url https://download.pytorch.org/whl/cu121 && \
+    pip install --no-cache-dir -r requirements.txt
+
+
+# ── Stage 2: Runtime ──────────────────────────────────────────
+FROM python:3.10-slim AS runtime
+
+# Runtime system dependencies
+RUN apt-get update && apt-get install -y \
+    libgdal-dev \
+    libgeos-dev \
+    libproj-dev \
+    libspatialindex-dev \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+# Create non-root user
+RUN useradd -m -u 1000 omnigeofusion
+WORKDIR /app
+
+# Copy installed packages from builder
+COPY --from=builder /usr/local/lib/python3.10/site-packages \
+                    /usr/local/lib/python3.10/site-packages
+COPY --from=builder /usr/local/bin /usr/local/bin
+
+# Copy application code
+COPY src/       ./src/
+COPY configs/   ./configs/
+
+# Set ownership
+RUN chown -R omnigeofusion:omnigeofusion /app
+USER omnigeofusion
+
+# ── Environment ───────────────────────────────────────────────
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONPATH=/app \
+    MODEL_CONFIG=/app/configs/model_config.yaml \
+    TRAIN_CONFIG=/app/configs/training_config.yaml \
+    API_CONFIG=/app/configs/api_config.yaml \
+    CHECKPOINT_DIR=/checkpoints \
+    MODEL_VERSION=1.0.0 \
+    PORT=8000
+
+# ── Health check ──────────────────────────────────────────────
+HEALTHCHECK --interval=30s --timeout=10s \
+            --start-period=60s --retries=3 \
+    CMD curl -f http://localhost:${PORT}/health || exit 1
+
+# ── Expose port ───────────────────────────────────────────────
+EXPOSE ${PORT}
+
+# ── Entrypoint ────────────────────────────────────────────────
+CMD ["uvicorn", "src.api.main:app", \
+     "--host", "0.0.0.0", \
+     "--port", "8000", \
+     "--workers", "1", \
+     "--log-level", "info"]

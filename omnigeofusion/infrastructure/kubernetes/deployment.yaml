@@ -1,0 +1,187 @@
+# ================================================================
+# OmniGeoFusion — Kubernetes Deployment
+# ================================================================
+# Deploys the OmniGeoFusion API to EKS.
+#
+# Strategy: RollingUpdate (zero-downtime deploys)
+# Blue-green: achieved via separate deployments
+#             switching ALB target groups
+#
+# Apply:
+#   kubectl apply -f infrastructure/kubernetes/deployment.yaml
+# ================================================================
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: omnigeofusion-api
+  namespace: omnigeofusion
+  labels:
+    app:     omnigeofusion
+    tier:    api
+    version: "1.0.0"
+  annotations:
+    deployment.kubernetes.io/revision: "1"
+    description: "OmniGeoFusion multimodal geospatial API"
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app:  omnigeofusion
+      tier: api
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge:       1    # one extra pod during update
+      maxUnavailable: 0    # zero downtime
+  template:
+    metadata:
+      labels:
+        app:     omnigeofusion
+        tier:    api
+        version: "1.0.0"
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port:   "8000"
+        prometheus.io/path:   "/metrics"
+    spec:
+      # ── Security context ──────────────────────────────────
+      securityContext:
+        runAsNonRoot: true
+        runAsUser:    1000
+        fsGroup:      1000
+
+      # ── Init container: wait for DB ───────────────────────
+      initContainers:
+        - name: wait-for-postgres
+          image: busybox:1.35
+          command:
+            - sh
+            - -c
+            - |
+              until nc -z $POSTGRES_HOST 5432; do
+                echo "Waiting for PostgreSQL..."
+                sleep 2
+              done
+              echo "PostgreSQL ready"
+          env:
+            - name: POSTGRES_HOST
+              valueFrom:
+                secretKeyRef:
+                  name: omnigeofusion-secrets
+                  key: postgres-host
+
+      # ── Main container ────────────────────────────────────
+      containers:
+        - name: omnigeofusion-api
+          image: ACCOUNT_ID.dkr.ecr.us-east-1.amazonaws.com/omnigeofusion/api:latest
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 8000
+              name: http
+              protocol: TCP
+
+          # ── Environment ───────────────────────────────────
+          env:
+            - name: MODEL_VERSION
+              value: "1.0.0"
+            - name: MODEL_CONFIG
+              value: /app/configs/model_config.yaml
+            - name: CHECKPOINT_DIR
+              value: /checkpoints
+            - name: PYTHONUNBUFFERED
+              value: "1"
+            - name: PYTHONPATH
+              value: /app
+            - name: AWS_DEFAULT_REGION
+              value: us-east-1
+            - name: AWS_ACCESS_KEY_ID
+              valueFrom:
+                secretKeyRef:
+                  name: omnigeofusion-secrets
+                  key: aws-access-key-id
+            - name: AWS_SECRET_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: omnigeofusion-secrets
+                  key: aws-secret-access-key
+            - name: POSTGRES_URL
+              valueFrom:
+                secretKeyRef:
+                  name: omnigeofusion-secrets
+                  key: postgres-url
+            - name: REDIS_URL
+              valueFrom:
+                secretKeyRef:
+                  name: omnigeofusion-secrets
+                  key: redis-url
+
+          # ── Resource limits ───────────────────────────────
+          resources:
+            requests:
+              memory: "4Gi"
+              cpu:    "1000m"
+            limits:
+              memory: "8Gi"
+              cpu:    "2000m"
+
+          # ── Health checks ─────────────────────────────────
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 60
+            periodSeconds:       30
+            timeoutSeconds:      10
+            failureThreshold:    3
+
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 30
+            periodSeconds:       10
+            timeoutSeconds:      5
+            failureThreshold:    3
+
+          startupProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 30
+            periodSeconds:       10
+            failureThreshold:    12  # 2 min startup time
+
+          # ── Volume mounts ─────────────────────────────────
+          volumeMounts:
+            - name: checkpoints
+              mountPath: /checkpoints
+              readOnly: true
+            - name: configs
+              mountPath: /app/configs
+              readOnly: true
+
+      # ── Volumes ───────────────────────────────────────────
+      volumes:
+        - name: checkpoints
+          persistentVolumeClaim:
+            claimName: omnigeofusion-checkpoints-pvc
+        - name: configs
+          configMap:
+            name: omnigeofusion-config
+
+      # ── Scheduling ────────────────────────────────────────
+      nodeSelector:
+        role: api
+
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                labelSelector:
+                  matchLabels:
+                    app: omnigeofusion
+                topologyKey: kubernetes.io/hostname
+
+      terminationGracePeriodSeconds: 30

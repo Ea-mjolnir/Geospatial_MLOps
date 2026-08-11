@@ -1,0 +1,39 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.egg-info/
+.Python
+
+# Data files
+*.tif
+*.geojson
+*.csv
+*.parquet
+*.laz
+*.las
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Environment
+.env
+*.env
+venv/
+.venv/
+
+# AWS
+.aws/
+
+# Model checkpoints
+*.pt
+*.pth
+*.ckpt
+
+# OS
+.DS_Store
+Thumbs.db
+.venv/
+__pycache__/
+.pytest_cache/
+*.pyc

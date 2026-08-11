@@ -1,0 +1,60 @@
+# OmniGeoFusion API Configuration
+
+api:
+  name: OmniGeoFusion API
+  version: 1.0.0
+  description: Multimodal Geospatial Intelligence Platform
+  host: 0.0.0.0
+  port: 8000
+  workers: 4
+  reload: false
+
+# Endpoints
+endpoints:
+  urban_change:
+    path: /api/v1/fusion/urban-change
+    method: POST
+    timeout_seconds: 300     # satellite processing takes time
+    max_bbox_area_km2: 100   # limit request size
+
+  flood_damage:
+    path: /api/v1/fusion/flood-damage
+    method: POST
+    timeout_seconds: 300
+    max_bbox_area_km2: 500   # larger for disaster response
+
+  agriculture:
+    path: /api/v1/fusion/agriculture
+    method: POST
+    timeout_seconds: 300
+    max_bbox_area_km2: 50
+
+  health:
+    path: /health
+    method: GET
+
+  model_info:
+    path: /api/v1/model/info
+    method: GET
+
+# Model
+model:
+  checkpoint_path: /app/checkpoints/best
+  device: cuda
+  batch_size: 8
+  mixed_precision: true
+
+# AWS
+aws:
+  region: us-east-1
+  s3_bucket: omnigeofusion-data
+
+# Rate limiting
+rate_limit:
+  requests_per_minute: 60
+  max_concurrent: 10
+
+# Logging
+logging:
+  level: INFO
+  format: json
