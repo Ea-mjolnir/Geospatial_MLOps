@@ -37,3 +37,10 @@ Thumbs.db
 __pycache__/
 .pytest_cache/
 *.pyc
+
+# Terraform
+*.tfstate
+*.tfstate.backup
+terraform.tfvars
+.terraform/
+*.tfvars
