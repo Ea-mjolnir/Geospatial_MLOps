@@ -131,3 +131,4 @@ jobs:
           docker stop thermalwatch_test
           docker rm thermalwatch_test
           echo "✅ Container health check passed"
+# ThermalWatch CI/CD
