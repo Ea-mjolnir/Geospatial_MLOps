@@ -1,0 +1,133 @@
+name: ThermalWatch CI/CD
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'thermalwatch/**'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'thermalwatch/**'
+
+jobs:
+  test:
+    name: Test API
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: thermalwatch
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          pip install --upgrade pip
+          pip install \
+            fastapi==0.110.0 \
+            uvicorn[standard]==0.27.0 \
+            pydantic>=2.6.0 \
+            numpy==1.26.4 \
+            torch==2.2.0 torchvision==0.17.0 \
+            --index-url https://download.pytorch.org/whl/cpu
+          pip install \
+            terratorch>=0.1.0 \
+            transformers==4.40.0 \
+            timm einops \
+            scikit-learn>=1.4.0 \
+            pytest httpx
+
+      - name: Test imports
+        run: |
+          python3 -c "
+          import sys
+          sys.path.insert(0, '.')
+          from src.api.schemas.wildfire import WildfireRequest, WildfireResponse
+          from src.api.schemas.solar import SolarRequest, SolarResponse
+          from src.api.routers.health import router
+          from src.api.main import app
+          print('✅ All imports OK')
+          "
+
+      - name: Test health endpoint
+        run: |
+          python3 -c "
+          import sys, threading, time, json, urllib.request
+          sys.path.insert(0, '.')
+          import uvicorn
+          from src.api.main import app
+
+          def run():
+              uvicorn.run(app, host='0.0.0.0', port=8000, log_level='error')
+
+          t = threading.Thread(target=run, daemon=True)
+          t.start()
+          time.sleep(5)
+
+          resp = urllib.request.urlopen('http://localhost:8000/health')
+          data = json.loads(resp.read())
+          assert data['status'] == 'healthy', f'Health check failed: {data}'
+          print(f'✅ Health check passed: {data}')
+          "
+
+      - name: Test API schema validation
+        run: |
+          python3 -c "
+          import sys
+          sys.path.insert(0, '.')
+          from src.api.schemas.wildfire import WildfireRequest
+          from src.api.schemas.solar import SolarRequest
+
+          # Test valid wildfire request
+          wf = WildfireRequest(
+              thermal_patch=[35.0] * (224*224),
+              weather=[290.0, 0.0, 0.0, 275.0, 2.0],
+              osm=[1000.0, 500.0, 200.0, 100.0, 50.0, 300.0, 150.0],
+          )
+          assert len(wf.thermal_patch) == 224*224
+          print('✅ WildfireRequest schema OK')
+
+          # Test valid solar request
+          sol = SolarRequest(
+              thermal_patch=[45.0] * (224*224),
+              weather=[500.0, 800.0, 100.0, 3.0, 35.0],
+          )
+          assert len(sol.thermal_patch) == 224*224
+          print('✅ SolarRequest schema OK')
+          "
+
+  docker:
+    name: Build Docker Image
+    runs-on: ubuntu-latest
+    needs: test
+    defaults:
+      run:
+        working-directory: thermalwatch
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Build Docker image
+        run: |
+          docker build -t thermalwatch:${{ github.sha }} .
+          echo "✅ Docker image built: thermalwatch:${{ github.sha }}"
+
+      - name: Test container health
+        run: |
+          docker run -d \
+            --name thermalwatch_test \
+            -p 8000:8000 \
+            thermalwatch:${{ github.sha }}
+          sleep 10
+          curl -f http://localhost:8000/health
+          docker stop thermalwatch_test
+          docker rm thermalwatch_test
+          echo "✅ Container health check passed"
