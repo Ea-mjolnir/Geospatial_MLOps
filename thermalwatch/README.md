@@ -5,6 +5,7 @@
 [![Python](https://img.shields.io/badge/Python-3.11-blue)](https://python.org)
 [![PyTorch](https://img.shields.io/badge/PyTorch-2.2.0-orange)](https://pytorch.org)
 [![Prithvi](https://img.shields.io/badge/Prithvi--EO-2.0--300M-green)](https://huggingface.co/ibm-nasa-geospatial/Prithvi-EO-2.0-300M)
+[![CI/CD](https://github.com/Ea-mjolnir/Geospatial_MLOps/actions/workflows/thermalwatch-ci.yml/badge.svg)](https://github.com/Ea-mjolnir/Geospatial_MLOps/actions/workflows/thermalwatch-ci.yml)
 
 ---
 
@@ -169,8 +170,8 @@ M.Sc. Geodesy & Geoinformation, TU Berlin
 | Supervised fine-tuning | ✅ Complete |
 | Evaluation | ✅ Complete |
 | Colab training notebook | ✅ Complete |
-| FastAPI inference endpoints | 🔄 In Progress |
-| Docker containerization | 🔄 In Progress |
-| GitHub Actions CI/CD | 🔄 In Progress |
+| FastAPI inference endpoints | ✅ Complete |
+| Docker containerization | ✅ Complete |
+| GitHub Actions CI/CD | ✅ Complete |
 | MLflow experiment tracking | 🔄 In Progress |
 | Airflow data pipeline DAGs | 🔄 In Progress |
