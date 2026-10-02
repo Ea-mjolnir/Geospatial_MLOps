@@ -1,0 +1,174 @@
+name: GeoFoundationHub CI/CD
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'geofoundationhub/**'
+      - '.github/workflows/geofoundationhub-ci.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'geofoundationhub/**'
+
+jobs:
+  test:
+    name: Test API
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: geofoundationhub
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Cache pip
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-geofoundationhub-${{ hashFiles('geofoundationhub/requirements.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-geofoundationhub-
+
+      - name: Install FastAPI dependencies
+        run: |
+          pip install --upgrade pip
+          pip install \
+            fastapi==0.110.0 \
+            uvicorn[standard]==0.27.0 \
+            pydantic>=2.6.0 \
+            numpy==1.26.4 \
+            torch==2.2.0 \
+            --index-url https://download.pytorch.org/whl/cpu \
+            timm einops \
+            python-dotenv pyyaml httpx requests
+
+      - name: Test imports
+        run: |
+          python3 -c "
+          import sys
+          sys.path.insert(0, '.')
+          from models.base import BaseModelAdapter, InferenceInput, InferenceOutput
+          from src.registry.registry import ModelRegistry
+          from src.routing.router import ModelRouter
+          from src.auth.auth import TenantManager
+          from src.api.main import app
+          print('✅ All imports OK')
+          "
+
+      - name: Test registry
+        run: |
+          python3 -c "
+          import sys
+          sys.path.insert(0, '.')
+          from src.registry.registry import ModelRegistry
+          r = ModelRegistry()
+          s = r.summary()
+          assert s['total'] == 3, f'Expected 3 models, got {s[\"total\"]}'
+          assert s['active'] == 3
+          print(f'✅ Registry: {s[\"total\"]} models active')
+          "
+
+      - name: Test auth
+        run: |
+          python3 -c "
+          import sys
+          sys.path.insert(0, '.')
+          from src.auth.auth import TenantManager
+          tm = TenantManager()
+          t  = tm.get_by_key('fire-agency-key-2026')
+          assert t is not None
+          assert t.tenant_id == 'fire-agency'
+          print(f'✅ Auth: {tm.summary()[\"total_tenants\"]} tenants registered')
+          "
+
+      - name: Test intelligent routing logic
+        run: |
+          python3 -c "
+          import sys
+          sys.path.insert(0, '.')
+          from src.routing.intelligent_router import score_model
+
+          # Prithvi should score highest for 6-band multispectral
+          p = score_model('Prithvi-EO-2.0-300M', channels=6, sensor_type='multispectral')
+          s = score_model('SatMAE',               channels=6, sensor_type='multispectral')
+          r = score_model('RemoteCLIP',            channels=6, sensor_type='multispectral')
+          assert p > s and p > r, f'Prithvi should win: P={p} S={s} R={r}'
+          print(f'✅ 6-band multispectral: Prithvi wins (score={p})')
+
+          # RemoteCLIP should score highest for 3-band optical
+          p = score_model('Prithvi-EO-2.0-300M', channels=3, sensor_type='optical')
+          s = score_model('SatMAE',               channels=3, sensor_type='optical')
+          r = score_model('RemoteCLIP',            channels=3, sensor_type='optical')
+          assert r > p and r > s, f'RemoteCLIP should win: P={p} S={s} R={r}'
+          print(f'✅ 3-band optical: RemoteCLIP wins (score={r})')
+
+          # SatMAE should score highest for 3-band multispectral
+          p = score_model('Prithvi-EO-2.0-300M', channels=3, sensor_type='multispectral')
+          s = score_model('SatMAE',               channels=3, sensor_type='multispectral')
+          r = score_model('RemoteCLIP',            channels=3, sensor_type='multispectral')
+          assert s > r, f'SatMAE should beat RemoteCLIP: S={s} R={r}'
+          print(f'✅ 3-band multispectral: SatMAE wins (score={s})')
+          print('✅ All routing logic tests passed')
+          "
+
+      - name: Test health endpoint
+        run: |
+          python3 -c "
+          import sys, threading, time, json, urllib.request
+          sys.path.insert(0, '.')
+          import uvicorn
+          from src.api.main import app
+
+          def run():
+              uvicorn.run(app, host='0.0.0.0', port=8002, log_level='error')
+
+          t = threading.Thread(target=run, daemon=True)
+          t.start()
+          time.sleep(5)
+
+          resp = urllib.request.urlopen('http://localhost:8002/health')
+          data = json.loads(resp.read())
+          assert data['status'] == 'healthy'
+          assert data['registry']['total'] == 3
+          assert data['tenants'] == 4
+          print(f'✅ Health endpoint OK: {data[\"status\"]}')
+          print(f'   Registry: {data[\"registry\"][\"total\"]} models')
+          print(f'   Tenants:  {data[\"tenants\"]}')
+          "
+
+  docker:
+    name: Build Docker Image
+    runs-on: ubuntu-latest
+    needs: test
+    defaults:
+      run:
+        working-directory: geofoundationhub
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Build Docker image
+        run: |
+          docker build -t geofoundationhub:${{ github.sha }} .
+          echo "✅ Docker image built"
+
+      - name: Test container health
+        run: |
+          docker run -d \
+            --name geofoundationhub_test \
+            -p 8000:8000 \
+            -e MPLBACKEND=agg \
+            geofoundationhub:${{ github.sha }}
+          sleep 15
+          curl -f http://localhost:8000/health
+          docker stop geofoundationhub_test
+          docker rm geofoundationhub_test
+          echo "✅ Container health check passed"
